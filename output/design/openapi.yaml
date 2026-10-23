@@ -1,0 +1,962 @@
+openapi: 3.0.3
+info:
+  title: OnboardIQ API
+  version: 1.0.0
+  description: |
+    KYC onboarding for a savings account. All paths are under `/api/v1`.
+    Errors always look like `{ "error": { "code", "message", "details": [ { "field", "message" } ] } }`.
+    Synthetic data only.
+servers:
+  - url: http://localhost:3001/api/v1
+tags:
+  - name: Auth
+  - name: Applicant
+  - name: KYC officer
+  - name: Compliance
+  - name: System
+security:
+  - bearer: []
+paths:
+  /health:
+    get:
+      tags: [System]
+      security: []
+      summary: Liveness and database check
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: ok }
+                  db: { type: string, example: up }
+                  time: { type: string, format: date-time }
+  /auth/register:
+    post:
+      tags: [Auth]
+      security: []
+      summary: Create an applicant account (always APPLICANT)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, email, password]
+              properties:
+                name: { type: string }
+                email: { type: string, format: email }
+                password: { type: string, minLength: 8, description: At least one letter and one digit }
+      responses:
+        '201': { $ref: '#/components/responses/AuthOk' }
+        '400': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+  /auth/login:
+    post:
+      tags: [Auth]
+      security: []
+      summary: Sign in
+      description: Same 401 for an unknown email and a wrong password. 8 failures per email and address block it for 15 minutes (429).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email: { type: string, format: email }
+                password: { type: string }
+      responses:
+        '200': { $ref: '#/components/responses/AuthOk' }
+        '401': { $ref: '#/components/responses/Error' }
+        '429': { $ref: '#/components/responses/Error' }
+  /auth/me:
+    get:
+      tags: [Auth]
+      summary: Current user
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  user: { $ref: '#/components/schemas/User' }
+        '401': { $ref: '#/components/responses/Error' }
+  /reference/occupations:
+    get:
+      tags: [Applicant]
+      summary: Occupation names for the form (risk levels are never exposed)
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  occupations:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        code: { type: string }
+                        name: { type: string }
+  /applications:
+    get:
+      tags: [Applicant]
+      summary: My applications (safe view)
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  applications:
+                    type: array
+                    items: { $ref: '#/components/schemas/ApplicantView' }
+    post:
+      tags: [Applicant]
+      summary: Submit an application with 3 to 10 documents
+      description: The verification pipeline runs right after the response is built; poll `GET /applications/{id}` for the outcome.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [full_name, dob, gender, pan_number, aadhaar_last4, mobile, email, address, city, state, pincode, occupation_code, annual_income, consent, documents, document_types]
+              properties:
+                full_name: { type: string, minLength: 2, maxLength: 100 }
+                dob: { type: string, format: date }
+                gender: { type: string, enum: [MALE, FEMALE, OTHER] }
+                pan_number: { type: string, pattern: '^[A-Za-z]{5}[0-9]{4}[A-Za-z]$', description: Upper-cased by the server. The 4th letter being P is rule R5, not a validation error }
+                aadhaar_last4: { type: string, pattern: '^[0-9]{4}$' }
+                address: { type: string, minLength: 10, maxLength: 300 }
+                pincode: { type: string, pattern: '^[1-9][0-9]{5}$' }
+                mobile: { type: string, pattern: '^[6-9][0-9]{9}$' }
+                email: { type: string, format: email }
+                city: { type: string }
+                state: { type: string }
+                occupation_code: { type: string, description: A code from GET /reference/occupations }
+                annual_income: { type: number, minimum: 0 }
+                consent: { type: boolean, description: Must be true }
+                documents:
+                  type: array
+                  minItems: 3
+                  maxItems: 10
+                  items: { type: string, format: binary }
+                  description: UTF-8 .txt files, 1 byte to 1 MB each
+                document_types:
+                  type: array
+                  items: { $ref: '#/components/schemas/DocumentType' }
+                  description: One per file, same order
+                doc_ids:
+                  type: array
+                  items: { type: string, pattern: '^[A-Za-z0-9_-]{1,64}$' }
+                  description: Optional, one per file. Default is the file name without .txt; the extractor looks documents up by this id (for example D3000001)
+            encoding:
+              documents: { contentType: text/plain }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  application: { $ref: '#/components/schemas/ApplicantView' }
+        '400': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '413': { $ref: '#/components/responses/Error' }
+  /applications/{id}:
+    parameters:
+      - $ref: '#/components/parameters/AppId'
+    get:
+      tags: [Applicant, KYC officer, Compliance]
+      summary: One application
+      description: Applicants get the safe view of their own application (403 for someone else's). Officers get the full record including the rule trace and extracted fields.
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  application:
+                    oneOf:
+                      - $ref: '#/components/schemas/ApplicantView'
+                      - $ref: '#/components/schemas/StaffView'
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+  /applications/{id}/decision:
+    parameters:
+      - $ref: '#/components/parameters/AppId'
+    get:
+      tags: [Applicant, KYC officer, Compliance]
+      summary: Decision API response
+      description: Staff get the case document's decision response. The owner gets only the status and plain-language reasons.
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  decision:
+                    type: object
+                    properties:
+                      application_id: { type: string }
+                      decision: { $ref: '#/components/schemas/Decision' }
+                      reason_codes: { type: array, items: { type: string } }
+                      name_match_score: { type: number, nullable: true, description: 4 decimals in the CSV, unrounded here }
+                      risk_category: { $ref: '#/components/schemas/Risk' }
+                      rekyc_due_date: { type: string, format: date, nullable: true }
+                      status: { $ref: '#/components/schemas/Status' }
+                      documents:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            doc_id: { type: string }
+                            declared_doc_type: { $ref: '#/components/schemas/DocumentType' }
+                            doc_type: { $ref: '#/components/schemas/DocumentTypeOrOther' }
+                            confidence: { type: number, nullable: true }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+  /applications/{id}/resubmit:
+    parameters:
+      - $ref: '#/components/parameters/AppId'
+    post:
+      tags: [Applicant]
+      summary: Upload corrected documents within the 7-day window
+      description: Replaces documents by type (address proofs replace each other); old versions are kept. Resets the application date and re-runs the pipeline.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [documents, document_types]
+              properties:
+                documents: { type: array, minItems: 1, maxItems: 10, items: { type: string, format: binary } }
+                document_types: { type: array, items: { $ref: '#/components/schemas/DocumentType' } }
+                doc_ids: { type: array, items: { type: string } }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  application: { $ref: '#/components/schemas/ApplicantView' }
+        '409':
+          description: INVALID_STATE, DUPLICATE_DOCUMENT or RESUBMISSION_WINDOW_EXPIRED
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+  /applications/{id}/documents:
+    parameters:
+      - $ref: '#/components/parameters/AppId'
+    get:
+      tags: [Applicant, KYC officer, Compliance]
+      summary: Document metadata
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  documents:
+                    type: array
+                    items: { $ref: '#/components/schemas/DocumentMeta' }
+  /applications/{id}/documents/{docId}/content:
+    parameters:
+      - $ref: '#/components/parameters/AppId'
+      - name: docId
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      tags: [Applicant, KYC officer, Compliance]
+      summary: Document text (writes a DOCUMENT_VIEWED audit event)
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  document:
+                    allOf:
+                      - $ref: '#/components/schemas/DocumentMeta'
+                      - type: object
+                        properties:
+                          content: { type: string }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+  /applications/{id}/audit:
+    parameters:
+      - $ref: '#/components/parameters/AppId'
+    get:
+      tags: [KYC officer, Compliance]
+      summary: Audit trail of one application (PAN masked)
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  application_id: { type: string }
+                  count: { type: integer }
+                  events:
+                    type: array
+                    items: { $ref: '#/components/schemas/AuditEvent' }
+  /applications/{id}/audit/export:
+    parameters:
+      - $ref: '#/components/parameters/AppId'
+    get:
+      tags: [Compliance]
+      summary: Audit trail as CSV (the export itself is audited)
+      responses:
+        '200':
+          description: CSV file
+          content:
+            text/csv:
+              schema: { type: string }
+  /documents/{docId}/extract:
+    parameters:
+      - name: docId
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      tags: [Applicant, KYC officer]
+      summary: Run the configured extraction provider (mock or AI) for one document
+      description: Provider chosen by EXTRACTION_PROVIDER (mock or ai), no code change. The backend may also call it with header x-service-key. An unknown doc_id returns doc_type OTHER with confidence 0.00.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                application_id: { type: string, description: Required for applicants; staff may omit it for a stateless look-up }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  doc_id: { type: string }
+                  provider: { type: string, example: mock }
+                  doc_type: { $ref: '#/components/schemas/DocumentTypeOrOther' }
+                  confidence: { type: number, description: Confidence of the document type (0.00 for an unknown document, doc_type OTHER) }
+                  stored: { type: boolean }
+                  fields:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        field_name: { type: string, enum: [name, dob, gender, pan_number, aadhaar_last4, address, pincode, document_date, valid_until] }
+                        value: { type: string }
+                        confidence: { type: number }
+                  rows:
+                    type: array
+                    description: Same data in the long format of the extraction file - one doc_type row plus one row per field
+                    items:
+                      type: object
+                      properties:
+                        doc_id: { type: string }
+                        field_name: { type: string }
+                        value: { type: string }
+                        confidence: { type: number }
+        '502': { $ref: '#/components/responses/Error' }
+  /review/queue:
+    get:
+      tags: [KYC officer]
+      summary: Review queue (HIGH risk first, then oldest)
+      parameters:
+        - name: status
+          in: query
+          schema: { type: string, enum: [IN_REVIEW, RESUBMISSION_REQUESTED], default: IN_REVIEW }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string }
+                  count: { type: integer }
+                  applications:
+                    type: array
+                    items: { $ref: '#/components/schemas/ListRow' }
+  /review/{id}/documents/{docId}/fields/{field}:
+    parameters:
+      - $ref: '#/components/parameters/AppId'
+      - name: docId
+        in: path
+        required: true
+        schema: { type: string }
+      - name: field
+        in: path
+        required: true
+        description: An extracted field name, or `document_type` to correct the classification
+        schema: { type: string }
+    patch:
+      tags: [KYC officer]
+      summary: Correct an extracted value and re-run every rule
+      description: Stores the value with confidence 1.00 and source OFFICER, keeps the original, audits old to new. The status stays IN_REVIEW.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [value, reason, version]
+              properties:
+                value: { type: string }
+                reason: { type: string, minLength: 5 }
+                version: { type: integer, description: The application version you read }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  version: { type: integer }
+                  before: { $ref: '#/components/schemas/Outcome' }
+                  after: { $ref: '#/components/schemas/Outcome' }
+                  application: { $ref: '#/components/schemas/StaffView' }
+        '409':
+          description: VERSION_CONFLICT or INVALID_STATE
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+  /review/{id}/recommend:
+    parameters:
+      - $ref: '#/components/parameters/AppId'
+    post:
+      tags: [KYC officer]
+      summary: Recommend approve, reject, or ask for new documents
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [recommendation, comment, version]
+              properties:
+                recommendation: { type: string, enum: [APPROVE, REJECT, REQUEST_RESUBMISSION] }
+                comment: { type: string, minLength: 10 }
+                version: { type: integer }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  application: { $ref: '#/components/schemas/StaffView' }
+        '409': { $ref: '#/components/responses/Error' }
+  /compliance/pending:
+    get:
+      tags: [Compliance]
+      summary: Cases waiting for final sign-off
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  count: { type: integer }
+                  applications:
+                    type: array
+                    items:
+                      allOf:
+                        - $ref: '#/components/schemas/ListRow'
+                        - type: object
+                          properties:
+                            maker_name: { type: string, nullable: true }
+                            maker_comment: { type: string, nullable: true }
+  /compliance/{id}/decision:
+    parameters:
+      - $ref: '#/components/parameters/AppId'
+    post:
+      tags: [Compliance]
+      summary: Final decision
+      description: 403 if the caller is the maker of this case. APPROVE opens the core-banking account first; if that fails (502) nothing changes and the call can be repeated.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [decision, version]
+              properties:
+                decision: { type: string, enum: [APPROVE, REJECT, SEND_BACK] }
+                comment: { type: string, description: At least 10 characters for REJECT and SEND_BACK }
+                version: { type: integer }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  application: { $ref: '#/components/schemas/StaffView' }
+        '403': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '502': { $ref: '#/components/responses/Error' }
+  /compliance/{id}/open-account:
+    parameters:
+      - $ref: '#/components/parameters/AppId'
+    post:
+      tags: [Compliance]
+      summary: Retry account opening for an approved application (idempotent)
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  application: { $ref: '#/components/schemas/StaffView' }
+        '502': { $ref: '#/components/responses/Error' }
+  /compliance/dashboard:
+    get:
+      tags: [Compliance]
+      summary: Dashboard numbers for an IST date range
+      parameters:
+        - { name: from, in: query, schema: { type: string, format: date } }
+        - { name: to, in: query, schema: { type: string, format: date } }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  range: { type: object }
+                  total: { type: integer }
+                  by_status: { type: object, additionalProperties: { type: integer } }
+                  rule_decisions: { type: object }
+                  final_outcomes: { type: object }
+                  risk: { type: object }
+                  in_review: { type: integer }
+                  pending_checker: { type: integer }
+                  straight_through_rate: { type: number, nullable: true }
+                  top_reasons:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        code: { type: string }
+                        n: { type: integer }
+                  review_time: { type: object }
+                  daily: { type: array, items: { type: object } }
+                  definitions: { type: object, additionalProperties: { type: string } }
+  /compliance/config:
+    get:
+      tags: [Compliance]
+      summary: Rule thresholds with defaults and versions
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  config:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        key: { type: string }
+                        value: {}
+                        default: {}
+                        version: { type: integer }
+                        updated_by: { type: string, nullable: true }
+                        updated_at: { type: string, format: date-time, nullable: true }
+    patch:
+      tags: [Compliance]
+      summary: Change one or more thresholds (validated, versioned, audited)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [changes]
+              properties:
+                changes:
+                  type: object
+                  additionalProperties: true
+                  example: { name_reject_threshold: 0.8 }
+      responses:
+        '200':
+          description: The full configuration after the change
+        '400': { $ref: '#/components/responses/Error' }
+  /compliance/watchlists:
+    get:
+      tags: [Compliance]
+      summary: List sanctions or PEP entries
+      parameters:
+        - { name: list, in: query, schema: { type: string, enum: [sanctions, pep], default: sanctions } }
+        - { name: q, in: query, description: Name or alias search, schema: { type: string } }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  list: { type: string }
+                  count: { type: integer }
+                  entries: { type: array, items: { type: object } }
+    post:
+      tags: [Compliance]
+      summary: Add an entry
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [list, name]
+              properties:
+                list: { type: string, enum: [sanctions, pep] }
+                name: { type: string }
+                aliases: { type: array, items: { type: string } }
+                dob: { type: string, format: date, nullable: true }
+                nationality: { type: string, description: Sanctions only }
+                program: { type: string, description: Sanctions only }
+                position: { type: string, description: PEP only }
+                category: { type: string, description: PEP only }
+      responses:
+        '201':
+          description: Created; `rescreen_recommended` is true
+  /compliance/watchlists/{list}/{id}:
+    parameters:
+      - { name: list, in: path, required: true, schema: { type: string, enum: [sanctions, pep] } }
+      - { name: id, in: path, required: true, schema: { type: integer } }
+    patch:
+      tags: [Compliance]
+      summary: Update an entry (only the fields you send)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true }
+      responses:
+        '200': { description: Updated }
+        '404': { $ref: '#/components/responses/Error' }
+    delete:
+      tags: [Compliance]
+      summary: Remove an entry
+      responses:
+        '200': { description: Removed }
+        '404': { $ref: '#/components/responses/Error' }
+  /compliance/rescreen:
+    post:
+      tags: [Compliance]
+      summary: Re-run open cases against the current lists and thresholds
+      description: A case waiting for sign-off that picks up a new watchlist reason goes back to IN_REVIEW.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                application_ids: { type: array, items: { type: string } }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  checked: { type: integer }
+                  changed_count: { type: integer }
+                  changed: { type: array, items: { type: object } }
+  /compliance/audit:
+    get:
+      tags: [Compliance]
+      summary: Search the audit trail
+      parameters:
+        - { name: application_id, in: query, schema: { type: string } }
+        - { name: event_type, in: query, schema: { type: string } }
+        - { name: actor_role, in: query, schema: { type: string, enum: [APPLICANT, KYC_OFFICER, COMPLIANCE_OFFICER, SYSTEM] } }
+        - { name: from, in: query, schema: { type: string, format: date } }
+        - { name: to, in: query, schema: { type: string, format: date } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 500, default: 100 } }
+        - { name: offset, in: query, schema: { type: integer, minimum: 0, default: 0 } }
+      responses:
+        '200':
+          description: OK, newest first
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  count: { type: integer }
+                  limit: { type: integer }
+                  offset: { type: integer }
+                  events: { type: array, items: { $ref: '#/components/schemas/AuditEvent' } }
+  /mock-core-banking/accounts:
+    post:
+      tags: [System]
+      security: []
+      summary: Mock core-banking account creation (service key required)
+      parameters:
+        - { name: x-api-key, in: header, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [application_id]
+              properties:
+                application_id: { type: string, example: A3000001 }
+      responses:
+        '201':
+          description: Deterministic ids, so retrying for the same application is safe
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  customer_id: { type: string, example: CUST03000001 }
+                  account_id: { type: string, example: '501003000001' }
+                  account_type: { type: string, example: SAVINGS }
+                  opened_on: { type: string, format: date-time }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '503': { $ref: '#/components/responses/Error' }
+components:
+  securitySchemes:
+    bearer:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  parameters:
+    AppId:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, example: A3000001 }
+  responses:
+    AuthOk:
+      description: Token and user
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              token: { type: string }
+              user: { $ref: '#/components/schemas/User' }
+    Error:
+      description: Error
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+  schemas:
+    Error:
+      type: object
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code: { type: string, example: VALIDATION_ERROR }
+            message: { type: string }
+            details:
+              type: array
+              items:
+                type: object
+                properties:
+                  field: { type: string }
+                  message: { type: string }
+    User:
+      type: object
+      properties:
+        id: { type: integer }
+        name: { type: string }
+        email: { type: string }
+        role: { type: string, enum: [APPLICANT, KYC_OFFICER, COMPLIANCE_OFFICER] }
+    Status:
+      type: string
+      enum: [SUBMITTED, EXTRACTING, AUTO_APPROVED, IN_REVIEW, PENDING_CHECKER, AUTO_REJECTED, RESUBMISSION_REQUESTED, APPROVED, REJECTED, CLOSED_EXPIRED]
+    DocumentType:
+      type: string
+      enum: [PAN_CARD, AADHAAR_CARD, ELECTRICITY_BILL, BANK_STATEMENT, DRIVING_LICENCE]
+    DocumentTypeOrOther:
+      type: string
+      enum: [PAN_CARD, AADHAAR_CARD, ELECTRICITY_BILL, BANK_STATEMENT, DRIVING_LICENCE, OTHER]
+    Decision:
+      type: string
+      enum: [APPROVE, REVIEW, REJECT]
+    Risk:
+      type: string
+      enum: [LOW, MEDIUM, HIGH]
+      nullable: true
+    DocumentMeta:
+      type: object
+      properties:
+        doc_id: { type: string }
+        declared_type: { $ref: '#/components/schemas/DocumentType' }
+        original_filename: { type: string }
+        size_bytes: { type: integer }
+        sha256: { type: string }
+        version: { type: integer }
+        superseded: { type: boolean }
+        uploaded_at: { type: string, format: date-time }
+    ApplicantView:
+      type: object
+      description: Never contains risk, scores, confidences, reason codes or watchlist data
+      properties:
+        id: { type: string }
+        status: { $ref: '#/components/schemas/Status' }
+        status_label: { type: string }
+        status_message: { type: string }
+        reasons: { type: array, items: { type: string } }
+        submitted_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        declared: { type: object }
+        resubmission_deadline: { type: string, format: date-time, nullable: true }
+        can_resubmit: { type: boolean }
+        account_id: { type: string, nullable: true }
+        timeline:
+          type: array
+          items:
+            type: object
+            properties:
+              status: { $ref: '#/components/schemas/Status' }
+              label: { type: string }
+              at: { type: string, format: date-time }
+        documents: { type: array, items: { $ref: '#/components/schemas/DocumentMeta' } }
+        replaced_documents: { type: array, items: { $ref: '#/components/schemas/DocumentMeta' } }
+    ListRow:
+      type: object
+      properties:
+        id: { type: string }
+        full_name: { type: string }
+        pan_masked: { type: string, example: ZZKXXXXX4Q }
+        status: { $ref: '#/components/schemas/Status' }
+        decision: { $ref: '#/components/schemas/Decision' }
+        reason_codes: { type: array, items: { type: string } }
+        risk_category: { $ref: '#/components/schemas/Risk' }
+        name_match_score: { type: number, nullable: true }
+        maker_recommendation: { type: string, nullable: true }
+        submitted_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        version: { type: integer }
+        waiting_hours: { type: number }
+    Outcome:
+      type: object
+      properties:
+        decision: { $ref: '#/components/schemas/Decision' }
+        reason_codes: { type: array, items: { type: string } }
+        risk_category: { $ref: '#/components/schemas/Risk' }
+        name_match_score: { type: number, nullable: true }
+    StaffView:
+      type: object
+      description: The full record. `evaluation` holds the complete engine output including the 17-rule trace.
+      properties:
+        id: { type: string }
+        status: { $ref: '#/components/schemas/Status' }
+        version: { type: integer }
+        decision: { $ref: '#/components/schemas/Decision' }
+        reason_codes: { type: array, items: { type: string } }
+        risk_category: { $ref: '#/components/schemas/Risk' }
+        name_match_score: { type: number, nullable: true }
+        rekyc_due_date: { type: string, format: date, nullable: true }
+        evaluation:
+          type: object
+          nullable: true
+          properties:
+            engine_version: { type: string }
+            rules:
+              type: array
+              items:
+                type: object
+                properties:
+                  rule: { type: string, example: R9 }
+                  code: { type: string }
+                  title: { type: string }
+                  outcome: { type: string, enum: [REVIEW, REJECT] }
+                  status: { type: string, enum: [TRIGGERED, PASSED, NOT_EVALUATED] }
+                  detail: { type: string }
+                  evidence: { type: object }
+            name_scores: { type: array, items: { type: object } }
+            watchlist: { type: object }
+            risk_basis: { type: array, items: { type: string } }
+            selected_documents: { type: object }
+        timeline: { type: array, items: { type: object } }
+        documents:
+          type: array
+          items:
+            allOf:
+              - $ref: '#/components/schemas/DocumentMeta'
+              - type: object
+                properties:
+                  classified_type: { $ref: '#/components/schemas/DocumentTypeOrOther' }
+                  classification_confidence: { type: number }
+                  fields:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        field: { type: string }
+                        value: { type: string }
+                        confidence: { type: number }
+                        source: { type: string, enum: [MOCK, OFFICER, AI] }
+                        original_value: { type: string, nullable: true }
+    AuditEvent:
+      type: object
+      properties:
+        id: { type: integer }
+        at: { type: string, format: date-time }
+        event_type: { type: string }
+        application_id: { type: string, nullable: true }
+        document_id: { type: string, nullable: true }
+        entity_type: { type: string }
+        entity_id: { type: string, nullable: true }
+        actor:
+          type: object
+          properties:
+            id: { type: integer, nullable: true }
+            role: { type: string, nullable: true }
+            name: { type: string, nullable: true }
+        old_value: { type: object, nullable: true }
+        new_value: { type: object, nullable: true }
+        details: { type: object, nullable: true }

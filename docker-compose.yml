@@ -1,0 +1,60 @@
+# docker compose up --build        -> web on http://localhost:8080, API on http://localhost:3001, PostgreSQL on 5432
+# docker compose up -d db          -> database only (use this with `npm run dev` on your own machine)
+#
+# The api service re-creates the tables and demo users when it starts (node src/db/seed.js). Remove that part of the
+# command if you want data to survive restarts.
+services:
+  db:
+    image: postgres:16
+    container_name: onboardiq-db
+    environment:
+      POSTGRES_USER: onboardiq
+      POSTGRES_PASSWORD: onboardiq
+      POSTGRES_DB: onboardiq
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U onboardiq -d onboardiq"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  api:
+    build:
+      context: .
+      dockerfile: code/server/Dockerfile
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      NODE_ENV: development
+      PORT: "3001"
+      DATABASE_URL: postgres://onboardiq:onboardiq@db:5432/onboardiq
+      JWT_SECRET: change_me_dev_only_secret_value
+      CORS_ORIGINS: http://localhost:8080
+      DEMO_PASSWORD: Demo@1234
+      EXTRACTION_PROVIDER: mock
+      MOCK_EXTRACTION_FILE: data/sample/extraction_mock.csv
+      CORE_BANKING_API_KEY: dev-core-banking-key-change-me
+      EXTRACTION_SERVICE_KEY: dev-extraction-service-key-change-me
+      # APPLICATION_DATE: "2026-03-04"   # uncomment to reproduce the case document's worked examples
+    ports:
+      - "3001:3001"
+    volumes:
+      - uploads:/app/uploads
+    command: ["sh", "-c", "node src/db/seed.js && node src/index.js"]
+
+  web:
+    build:
+      context: .
+      dockerfile: code/client/Dockerfile
+    depends_on:
+      - api
+    ports:
+      - "8080:80"
+
+volumes:
+  pgdata: {}
+  uploads: {}

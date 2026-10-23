@@ -1,0 +1,25 @@
+{
+  "name": "onboardiq",
+  "version": "1.0.0",
+  "private": true,
+  "description": "OnboardIQ - intelligent KYC onboarding (Nexora / HCLTech BFSI hackathon)",
+  "scripts": {
+    "setup": "npm install && npm --prefix code/server install && npm --prefix code/client install && node scripts/ensure-env.mjs",
+    "db:up": "docker compose up -d --wait db",
+    "db:down": "docker compose down",
+    "dev": "concurrently -k -n api,web -c blue,green \"npm run dev:server\" \"npm run dev:client\"",
+    "dev:server": "npm --prefix code/server run dev",
+    "dev:client": "npm --prefix code/client run dev",
+    "seed": "npm --prefix code/server run seed",
+    "test": "npm run test:api",
+    "test:api": "npm --prefix code/server run test:api",
+    "test:rules": "npm --prefix code/server run test:rules",
+    "test:sample": "npm --prefix code/server run test:sample",
+    "batch": "npm --prefix code/server run batch",
+    "smoke": "npm --prefix code/server run smoke",
+    "build": "npm --prefix code/client run build"
+  },
+  "devDependencies": {
+    "concurrently": "^9.0.0"
+  }
+}

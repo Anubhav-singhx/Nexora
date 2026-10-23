@@ -1,0 +1,61 @@
+application_id,what_it_tests
+A2000001,"Ex1 clean applicant -> APPROVE, LOW, AUTO_APPROVED"
+A2000002,Ex2 age 17 -> AGE_BELOW_18
+A2000003,"Ex3 PAN card shows ZZMPN3465S, declared ZZMPN3456S -> PAN_MISMATCH"
+A2000004,Ex4 PAN card shows Ravi K Sharma -> NAME_MISMATCH_MINOR 0.7647
+A2000005,Ex5 electricity bill 120 days old -> ADDRESS_PROOF_STALE
+A2000006,Ex6 equals sanctions entry SAN0002 -> SANCTIONS_MATCH
+A2000007,"Ex7 equals PEP0001 -> PEP_MATCH, HIGH"
+A2000008,Ex8 file declared AADHAAR_CARD is a bank statement -> DOCUMENT_MISSING|DOCUMENT_TYPE_MISMATCH
+A2000009,"Ex9 poor scan, pan_number read as ZZTP59O12Y (0.62) -> LOW_EXTRACTION_CONFIDENCE"
+A2000010,"Ex10 HIGH-risk occupation, driving licence -> APPROVE, PENDING_CHECKER"
+A2000011,"Medium-risk occupation -> MEDIUM, +8 years"
+A2000012,"Income exactly Rs 25,00,000 -> MEDIUM"
+A2000013,"Income Rs 24,99,999 -> LOW"
+A2000014,"HIGH-risk occupation with a bank statement -> HIGH, PENDING_CHECKER"
+A2000015,Exactly 18 on the application date -> passes
+A2000016,Turns 18 tomorrow (17 today) -> AGE_BELOW_18
+A2000017,29 February application date: LOW +10y -> 28 February
+A2000018,29 February application date: HIGH +2y -> 28 February
+A2000019,Declared PAN has company holder type C -> PAN_INVALID
+A2000020,Declared PAN malformed -> PAN_INVALID|PAN_MISMATCH
+A2000021,Aadhaar card shows a different dob -> DOB_MISMATCH
+A2000022,PAN card shows a different dob -> DOB_MISMATCH
+A2000023,Aadhaar card shows other last four digits -> AADHAAR_MISMATCH
+A2000024,Names on both cards unrelated -> NAME_MISMATCH
+A2000025,Similarity exactly 0.75 -> NAME_MISMATCH_MINOR (not a reject)
+A2000026,Similarity exactly 0.90 -> passes
+A2000027,Title Dr. is ignored -> 1.0000
+A2000028,Hyphenated surname and token order ignored -> 1.0000
+A2000029,Lowest of PAN and Aadhaar name scores is used -> 0.7647
+A2000030,"Name on PAN card unreadable (0.70) -> LOW_EXTRACTION_CONFIDENCE, score from Aadhaar only"
+A2000031,"Unreadable dob on PAN card (0.55) -> R3 only, R7 not evaluated"
+A2000032,Address proof doc_type confidence 0.75 -> DOCUMENT_MISSING|LOW_EXTRACTION_CONFIDENCE (assumption A-R1)
+A2000033,"Driving licence without valid_until -> LOW_EXTRACTION_CONFIDENCE, R12 not evaluated"
+A2000034,Bill classified as BANK_STATEMENT (still an address proof) -> DOCUMENT_TYPE_MISMATCH
+A2000035,"A fourth, unrelated document declared as a bank statement -> DOCUMENT_TYPE_MISMATCH"
+A2000036,No Aadhaar uploaded -> DOCUMENT_MISSING
+A2000037,No address proof -> DOCUMENT_MISSING
+A2000038,"Two PAN cards: the lowest doc_id is used, the later one is ignored -> APPROVE"
+A2000039,"Under 18 and PEP match -> AGE_BELOW_18|PEP_MATCH (reject wins, codes in rule order)"
+A2000040,"Declared name equals a sanctions alias, dob equal -> SANCTIONS_MATCH"
+A2000041,Sanctions entry without dob -> SANCTIONS_MATCH whatever the dob
+A2000042,"Same name as a sanctions entry, different dob -> SANCTIONS_POSSIBLE_MATCH, HIGH"
+A2000043,"Similarity 0.85 to a sanctions entry, equal dob -> SANCTIONS_POSSIBLE_MATCH"
+A2000044,"PEP match -> PEP_MATCH, HIGH"
+A2000045,PEP name with a different dob and similarity >= 0.90 is only POSSIBLE -> no rule fires
+A2000046,PEP match and sanctions possible -> PEP_MATCH|SANCTIONS_POSSIBLE_MATCH order
+A2000047,Declared PAN already belongs to a customer -> DUPLICATE_CUSTOMER
+A2000048,Driving licence valid until the day before -> DOCUMENT_EXPIRED
+A2000049,Driving licence valid until the application date -> passes
+A2000050,Bill exactly 90 days old -> passes
+A2000051,Bill 91 days old -> ADDRESS_PROOF_STALE
+A2000052,Bank statement dated after the application date -> ADDRESS_PROOF_STALE
+A2000053,Address proof pincode differs -> ADDRESS_MISMATCH
+A2000054,"Unreadable pincode (0.60) -> R3 only, R14 not evaluated"
+A2000055,"PAN, dob and Aadhaar all differ -> PAN_MISMATCH|DOB_MISMATCH|AADHAAR_MISMATCH"
+A2000056,Reject plus review reason -> PAN_MISMATCH|ADDRESS_PROOF_STALE
+A2000057,"Poor PAN scan with a HIGH-risk occupation -> LOW_EXTRACTION_CONFIDENCE, HIGH"
+A2000058,Occupation code not in the table -> default risk LOW (assumption A-OCC)
+A2000059,"No extraction output at all (unknown documents) -> R1|R2|R3, no score"
+A2000060,"Clean applicant with a bank statement as address proof -> APPROVE, LOW"

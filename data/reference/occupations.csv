@@ -1,0 +1,13 @@
+occupation_code,description,risk_level
+SALARIED_PRIVATE,Salaried - private sector,LOW
+SALARIED_GOVERNMENT,Salaried - government,LOW
+STUDENT,Student,LOW
+HOMEMAKER,Homemaker,LOW
+RETIRED,Retired,LOW
+AGRICULTURIST,Agriculturist,LOW
+SELF_EMPLOYED_PROFESSIONAL,Self-employed professional,MEDIUM
+BUSINESS_OWNER,Business owner,MEDIUM
+TRADER_CASH_INTENSIVE,Trader - cash intensive,MEDIUM
+JEWELLER_BULLION_DEALER,Jeweller / bullion dealer,HIGH
+REAL_ESTATE_DEALER,Real estate dealer,HIGH
+MONEY_CHANGER_FOREX,Money changer / forex dealer,HIGH
